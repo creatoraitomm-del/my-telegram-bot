@@ -64,7 +64,7 @@ def choose_day(message):
         reply_markup=get_days_keyboard()
     )
 
-# Обработка возврата к выбору дня (Кнопка "Назад")
+# Кнопка "Назад"
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_days")
 def back_to_days(call):
     bot.edit_message_text(
@@ -74,27 +74,23 @@ def back_to_days(call):
         reply_markup=get_days_keyboard()
     )
 
-# --- ШАГ 2: Выбор времени (с кнопкой "Назад") ---
+# --- ШАГ 2: Выбор времени ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("day_"))
 def choose_time(call):
     selected_day = call.data.split("_")[1]
-    
-    # Сохраняем день
     user_booking[call.message.chat.id] = {"day": selected_day}
     
-    # Формируем время для каждого дня
     markup = types.InlineKeyboardMarkup(row_width=2)
     if selected_day == "Понедельник":
         times = ["12:00", "15:00", "18:00"]
     elif selected_day == "Среда":
         times = ["10:00", "14:00", "16:30"]
-    else: # Пятница
+    else:
         times = ["11:00", "13:00", "17:00"]
     
     time_buttons = [types.InlineKeyboardButton(f"⏰ {t}", callback_data=f"time_{t}") for t in times]
     markup.add(*time_buttons)
     
-    # Добавляем кнопку "Назад" отдельным рядом снизу
     btn_back = types.InlineKeyboardButton("⬅️ Назад к выбору дня", callback_data="back_to_days")
     markup.add(btn_back)
     
@@ -136,7 +132,7 @@ def confirm_slot(call):
         reply_markup=markup
     )
 
-# --- ШАГ 4: Прием контакта и отправка админу ---
+# --- ШАГ 4: Прием контакта ---
 @bot.message_handler(content_types=['contact'])
 def handle_contact(message):
     contact = message.contact
@@ -176,10 +172,10 @@ def handle_contact(message):
 def show_info(message):
     info_text = (
         "📍 **Наша контактная информация:**\n\n"
-        "🏢 **Адрес:** г. Томск, ул. Ленина, д. 10, офис 404\n"
+        "🏢 **Адрес:** г. Москва, ул. Примерная, д. 10, офис 404\n"
         "⏰ **Режим работы:** Пн-Пт с 09:00 до 20:00\n"
-        "📞 **Телефон:** +7 (800) 555-35-00\n"
-        "🌐 **Наш сайт:** https://probnyibot.com"
+        "📞 **Телефон:** +7 (999) 000-00-00\n"
+        "🌐 **Наш сайт:** https://example.com"
     )
     bot.send_message(message.chat.id, info_text, parse_mode='Markdown')
 
@@ -192,13 +188,37 @@ def ask_question(message):
     )
     bot.send_message(message.chat.id, ask_text, parse_mode='Markdown')
 
-# Пересылка вопросов
+# Обработка текстовых сообщений (вопросов и ответов администратора)
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     user = message.from_user
+    
+    # Режим Администратора
+    if message.chat.id == ADMIN_ID:
+        if message.reply_to_message:
+            try:
+                # Извлекаем ID из текста сообщения, на которое отвечает админ
+                msg_text = message.reply_to_message.text
+                if "ID:" in msg_text:
+                    target_id_str = msg_text.split("ID:")[1].split(")")[0].strip()
+                    target_user_id = int(target_id_str)
+                    
+                    bot.send_message(target_user_id, f"💬 **Ответ от администратора:**\n\n{message.text}", parse_mode='Markdown')
+                    bot.send_message(ADMIN_ID, "✅ Ответ успешно переслан клиенту!")
+                    return
+            except Exception as e:
+                bot.send_message(ADMIN_ID, f"❌ Ошибка отправки ответа: {e}")
+                return
+        else:
+            bot.send_message(ADMIN_ID, "💡 Чтобы ответить клиенту, воспользуйтесь функцией «Ответить» (Reply) на сообщение с его вопросом.")
+            return
+
+    # Режим Клиента
     bot.send_message(
         ADMIN_ID, 
-        f"📩 **Вопрос от пользователя @{user.username or user.first_name} (ID: {user.id}):**\n\n{message.text}"
+        f"📩 **Вопрос от пользователя (ID: {user.id}):**\n"
+        f"👤 **Имя:** {user.first_name} (@{user.username if user.username else 'нет'})\n\n"
+        f"💬 **Текст:** {message.text}"
     )
     bot.send_message(message.chat.id, "Ваше сообщение передано администратору! Мы ответим вам в ближайшее время.")
 
