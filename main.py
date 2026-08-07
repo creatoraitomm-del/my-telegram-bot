@@ -188,7 +188,7 @@ def ask_question(message):
     )
     bot.send_message(message.chat.id, ask_text, parse_mode='Markdown')
 
-# Обработка текстовых сообщений (вопросов и ответов администратора)
+# Обработка текстовых сообщений
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     user = message.from_user
@@ -197,7 +197,6 @@ def handle_text(message):
     if message.chat.id == ADMIN_ID:
         if message.reply_to_message:
             try:
-                # Извлекаем ID из текста сообщения, на которое отвечает админ
                 msg_text = message.reply_to_message.text
                 if "ID:" in msg_text:
                     target_id_str = msg_text.split("ID:")[1].split(")")[0].strip()
