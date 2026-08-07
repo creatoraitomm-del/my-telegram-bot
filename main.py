@@ -19,7 +19,7 @@ def run_health_check_server():
 
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
-# 2. Инициализация бота и Базы Данных (SQLite)
+# 2. Инициализация бота и БД
 TOKEN = os.environ.get('BOT_TOKEN')
 ADMIN_ID = 479939884
 
@@ -29,7 +29,6 @@ def init_db():
     conn = sqlite3.connect('booking_system.db')
     cursor = conn.cursor()
     
-    # Таблица услуг
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS services (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,7 +38,6 @@ def init_db():
         )
     ''')
     
-    # Таблица мастеров
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS masters (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +46,6 @@ def init_db():
         )
     ''')
     
-    # Таблица броней
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS bookings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,7 +60,6 @@ def init_db():
         )
     ''')
     
-    # Заполнение начальными данными, если пусто
     cursor.execute('SELECT COUNT(*) FROM services')
     if cursor.fetchone()[0] == 0:
         cursor.executemany('INSERT INTO services (name, price, duration) VALUES (?, ?, ?)', [
@@ -85,10 +81,8 @@ def init_db():
 
 init_db()
 
-# Временное хранилище текущего шага записи пользователя
 user_drafts = {}
 
-# График слотов по умолчанию
 available_schedule = {
     "10 Августа (Пн)": ["10:00", "12:00", "15:00", "18:00"],
     "12 Августа (Ср)": ["11:00", "14:00", "16:30"],
@@ -114,6 +108,46 @@ def admin_keyboard():
     markup.add(btn_list, btn_stats, btn_switch)
     return markup
 
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ОТОБРАЖЕНИЯ С шагами
+
+def render_services_markup():
+    conn = sqlite3.connect('booking_system.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, name, price, duration FROM services')
+    services = cursor.fetchall()
+    conn.close()
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for s_id, name, price, duration in services:
+        btn_text = f"✂️ {name} — {price} ({duration})"
+        markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"service_{s_id}"))
+    return markup
+
+def render_masters_markup(service_id):
+    conn = sqlite3.connect('booking_system.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, name, specialty FROM masters')
+    masters = cursor.fetchall()
+    conn.close()
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for m_id, name, spec in masters:
+        markup.add(types.InlineKeyboardButton(f"👤 {name} ({spec})", callback_data=f"master_{m_id}"))
+    
+    # Кнопка НАЗАД к услугам
+    btn_back = types.InlineKeyboardButton("⬅️ Назад к выбору услуги", callback_data="back_to_services")
+    markup.add(btn_back)
+    return markup
+
+def render_dates_markup():
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for date_str in available_schedule.keys():
+        markup.add(types.InlineKeyboardButton(f"🗓 {date_str}", callback_data=f"bdate_{date_str}"))
+        
+    btn_back = types.InlineKeyboardButton("⬅️ Назад к выбору мастера", callback_data="back_to_masters")
+    markup.add(btn_back)
+    return markup
+
 # --- КОМАНДА /START ---
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -129,25 +163,29 @@ def start(message):
         welcome_text = (
             f"Здравствуйте, {message.from_user.first_name}! 👋\n\n"
             f"Добро пожаловать в нашу систему онлайн-записи.\n"
-            f"Здесь вы можете выбрать услугу, мастера и забронировать удобное время за пару кликов! 👇"
+            f"Выберите нужное действие в меню ниже 👇"
         )
         bot.send_message(message.chat.id, welcome_text, reply_markup=client_keyboard())
 
 # --- ШАГ 1: ВЫБОР УСЛУГИ ---
 @bot.message_handler(func=lambda message: message.text in ["🚀 Записаться онлайн", "📝 Записаться"])
 def start_booking(message):
-    conn = sqlite3.connect('booking_system.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, name, price, duration FROM services')
-    services = cursor.fetchall()
-    conn.close()
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for s_id, name, price, duration in services:
-        btn_text = f"✂️ {name} — {price} ({duration})"
-        markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"service_{s_id}"))
-        
-    bot.send_message(message.chat.id, "Шаг 1 из 4: **Выберите нужную услугу:**", reply_markup=markup, parse_mode='Markdown')
+    bot.send_message(
+        message.chat.id, 
+        "Шаг 1 из 4: **Выберите нужную услугу:**", 
+        reply_markup=render_services_markup(), 
+        parse_mode='Markdown'
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_services")
+def back_to_services(call):
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="Шаг 1 из 4: **Выберите нужную услугу:**",
+        parse_mode='Markdown',
+        reply_markup=render_services_markup()
+    )
 
 # --- ШАГ 2: ВЫБОР МАСТЕРА ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("service_"))
@@ -158,23 +196,35 @@ def select_service(call):
     cursor = conn.cursor()
     cursor.execute('SELECT name, price FROM services WHERE id = ?', (service_id,))
     service = cursor.fetchone()
-    
-    cursor.execute('SELECT id, name, specialty FROM masters')
-    masters = cursor.fetchall()
     conn.close()
     
-    user_drafts[call.message.chat.id] = {"service_name": service[0], "service_price": service[1]}
+    user_drafts[call.message.chat.id] = {
+        "service_id": service_id,
+        "service_name": service[0], 
+        "service_price": service[1]
+    }
     
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for m_id, name, spec in masters:
-        markup.add(types.InlineKeyboardButton(f"👤 {name} ({spec})", callback_data=f"master_{m_id}"))
-        
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         text=f"Выбрана услуга: **{service[0]}**\n\nШаг 2 из 4: **Выберите мастера:**",
         parse_mode='Markdown',
-        reply_markup=markup
+        reply_markup=render_masters_markup(service_id)
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_masters")
+def back_to_masters(call):
+    chat_id = call.message.chat.id
+    draft = user_drafts.get(chat_id, {})
+    service_id = draft.get("service_id", 1)
+    service_name = draft.get("service_name", "Услуга")
+    
+    bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=call.message.message_id,
+        text=f"Выбрана услуга: **{service_name}**\n\nШаг 2 из 4: **Выберите мастера:**",
+        parse_mode='Markdown',
+        reply_markup=render_masters_markup(service_id)
     )
 
 # --- ШАГ 3: ВЫБОР ДАТЫ ---
@@ -192,16 +242,25 @@ def select_master(call):
     if chat_id in user_drafts:
         user_drafts[chat_id]["master_name"] = master_name
         
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for date_str in available_schedule.keys():
-        markup.add(types.InlineKeyboardButton(f"🗓 {date_str}", callback_data=f"bdate_{date_str}"))
-        
     bot.edit_message_text(
         chat_id=chat_id,
         message_id=call.message.message_id,
         text=f"Мастер: **{master_name}**\n\nШаг 3 из 4: **Выберите удобную дату:**",
         parse_mode='Markdown',
-        reply_markup=markup
+        reply_markup=render_dates_markup()
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_dates")
+def back_to_dates(call):
+    chat_id = call.message.chat.id
+    master_name = user_drafts.get(chat_id, {}).get("master_name", "Мастер")
+    
+    bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=call.message.message_id,
+        text=f"Мастер: **{master_name}**\n\nШаг 3 из 4: **Выберите удобную дату:**",
+        parse_mode='Markdown',
+        reply_markup=render_dates_markup()
     )
 
 # --- ШАГ 4: ВЫБОР ВРЕМЕНИ ---
@@ -215,7 +274,6 @@ def select_date(call):
         
     times = available_schedule.get(selected_date, [])
     
-    # Получаем уже занятые слоты из БД
     conn = sqlite3.connect('booking_system.db')
     cursor = conn.cursor()
     cursor.execute('SELECT booking_time FROM bookings WHERE booking_date = ? AND status = "active"', (selected_date,))
@@ -231,6 +289,9 @@ def select_date(call):
     markup = types.InlineKeyboardMarkup(row_width=2)
     time_buttons = [types.InlineKeyboardButton(f"⏰ {t}", callback_data=f"btime_{t}") for t in free_times]
     markup.add(*time_buttons)
+    
+    btn_back = types.InlineKeyboardButton("⬅️ Назад к выбору даты", callback_data="back_to_dates")
+    markup.add(btn_back)
     
     bot.edit_message_text(
         chat_id=chat_id,
@@ -249,7 +310,7 @@ def select_time(call):
     if chat_id in user_drafts:
         user_drafts[chat_id]["time"] = selected_time
         
-    draft = user_booking_info = user_drafts.get(chat_id, {})
+    draft = user_drafts.get(chat_id, {})
     
     summary = (
         f"📋 **ПРОВЕРЬТЕ ДАННЫЕ ЗАПИСИ:**\n\n"
@@ -285,7 +346,6 @@ def handle_contact(message):
     client_name = f"{contact.first_name} {contact.last_name or ''}".strip()
     phone = f"+{contact.phone_number}"
     
-    # Сохраняем в SQLite БД
     conn = sqlite3.connect('booking_system.db')
     cursor = conn.cursor()
     cursor.execute('''
@@ -297,7 +357,6 @@ def handle_contact(message):
     conn.commit()
     conn.close()
     
-    # Уведомление Администратору
     lead_info = (
         f"🎯 **НОВАЯ ПОДТВЕРЖДЕННАЯ БРОНЬ #{booking_id}**\n\n"
         f"✂️ **Услуга:** {draft.get('service_name')}\n"
@@ -314,7 +373,6 @@ def handle_contact(message):
     except Exception as e:
         print(f"Ошибка отправки админу: {e}")
 
-    # Подтверждение клиенту
     bot.send_message(
         chat_id, 
         f"🎉 **Вы успешно записаны!**\n\n"
@@ -352,7 +410,6 @@ def my_bookings(message):
         
     bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
 
-# Обработка отмены записи
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cancel_"))
 def cancel_booking(call):
     booking_id = int(call.data.split("_")[1])
@@ -372,7 +429,7 @@ def cancel_booking(call):
     
     bot.send_message(ADMIN_ID, f"🔔 **ОТМЕНА БРОНИ:** Клиент отменил запись #{booking_id}.")
 
-# --- АДМИН-ПАНЕЛЬ: ПРОСМОТР ВСЕХ ЗАПИСЕЙ ---
+# --- АДМИН-ПАНЕЛЬ ---
 @bot.message_handler(func=lambda message: message.text == "📋 Все активные записи" and message.chat.id == ADMIN_ID)
 def admin_all_bookings(message):
     conn = sqlite3.connect('booking_system.db')
