@@ -186,7 +186,7 @@ def start(message):
         )
         bot.send_message(message.chat.id, welcome_text, reply_markup=client_keyboard())
 
-# --- ИНТЕРАКТИВНОЕ УПРАВЛЕНИЕ ГРАФИКОМ МАСТЕРА (АДМИН) ---
+# --- УПРАВЛЕНИЕ КАТАЛОГОМ И ГРАФИКАМИ ---
 
 @bot.message_handler(func=lambda message: message.text == "⚙️ Управление каталогом и графиками" and message.chat.id == ADMIN_ID)
 def manage_catalog(message):
@@ -205,7 +205,6 @@ def manage_catalog(message):
     
     bot.send_message(ADMIN_ID, "⚙️ **Раздел управления услугами, мастерами и личным расписанием:**", reply_markup=markup, parse_mode='Markdown')
 
-# Выбор мастера для редактирования графика
 @bot.callback_query_handler(func=lambda call: call.data == "adm_edit_m_schedule")
 def prompt_select_master_schedule(call):
     conn = sqlite3.connect('booking_system.db')
@@ -224,7 +223,6 @@ def prompt_select_master_schedule(call):
         
     bot.send_message(ADMIN_ID, "Выберите мастера для настройки его расписания:", reply_markup=markup)
 
-# Просмотр и главное меню графика выбранного мастера
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_m_menu_"))
 def show_master_schedule_menu(call):
     m_id = int(call.data.split("_")[3])
@@ -257,7 +255,6 @@ def show_master_schedule_menu(call):
     
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=text, parse_mode='Markdown', reply_markup=markup)
 
-# Добавление нового окна (Шаг 1: Выбор даты)
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_add_slot_"))
 def add_slot_choose_date(call):
     m_id = int(call.data.split("_")[3])
@@ -280,14 +277,12 @@ def add_slot_choose_date(call):
     
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f"Выберите дату для добавления окна мастеру **{m_name}**:", parse_mode='Markdown', reply_markup=markup)
 
-# Ручной ввод новой даты
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_newdate_"))
 def add_slot_new_date_prompt(call):
     m_id = int(call.data.split("_")[2])
     admin_states[ADMIN_ID] = f"WAITING_NEW_DATE_{m_id}"
     bot.send_message(ADMIN_ID, "✍️ Напишите название новой даты (например: `20 Августа (Чт)`):", parse_mode='Markdown')
 
-# Добавление окна (Шаг 2: Выбор времени)
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_addtime_"))
 def add_slot_choose_time(call):
     parts = call.data.split("_")
@@ -303,7 +298,6 @@ def add_slot_choose_time(call):
     
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f"Выберите время для добавления на **{date_str}**:", parse_mode='Markdown', reply_markup=markup)
 
-# Сохранение выбранного времени
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_savetime_"))
 def save_added_time(call):
     parts = call.data.split("_")
@@ -330,7 +324,6 @@ def save_added_time(call):
     bot.answer_callback_query(call.id, f"✅ Добавлено окно {time_str} на {date_str}!", show_alert=True)
     show_master_schedule_menu(call)
 
-# Удаление окна (Выбор даты)
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_del_slot_"))
 def del_slot_choose_date(call):
     m_id = int(call.data.split("_")[3])
@@ -349,7 +342,6 @@ def del_slot_choose_date(call):
     
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="Выберите дату, где нужно удалить время:", reply_markup=markup)
 
-# Удаление конкретного времени
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_deltime_"))
 def del_slot_choose_time(call):
     parts = call.data.split("_")
@@ -371,7 +363,6 @@ def del_slot_choose_time(call):
     
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f"Нажмите на время на **{date_str}**, чтобы удалить его:", parse_mode='Markdown', reply_markup=markup)
 
-# Финал удаления времени
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_remtime_"))
 def process_remove_time(call):
     parts = call.data.split("_")
@@ -397,14 +388,13 @@ def process_remove_time(call):
     bot.answer_callback_query(call.id, f"❌ Окно {time_str} удалено!", show_alert=True)
     show_master_schedule_menu(call)
 
-# Ввод списком (Резервный вариант)
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_txt_sched_"))
 def prompt_text_schedule(call):
     m_id = int(call.data.split("_")[3])
     admin_states[ADMIN_ID] = f"WAITING_SCHED_MASTER_{m_id}"
     bot.send_message(ADMIN_ID, "✍️ Отправьте график списком:\n`10 Августа (Пн): 10:00, 12:00 | 12 Августа (Ср): 15:00`", parse_mode='Markdown')
 
-# Услуги и мастера
+# Управление услугами и мастерами
 @bot.callback_query_handler(func=lambda call: call.data == "adm_add_service")
 def prompt_add_service(call):
     admin_states[ADMIN_ID] = "WAITING_ADD_SERVICE"
@@ -580,7 +570,7 @@ def select_time(call):
     markup.add(types.KeyboardButton(text="📱 Подтвердить запись (отправить номер)", request_contact=True))
     bot.send_message(chat_id, "Осталось подтвердить контакт:", reply_markup=markup)
 
-# --- ПРИЕМ КОНТАКТА И ПУШ АДМИНУ ---
+# --- ПРИЕМ КОНТАКТА И ПУШ АДМИНУ СО ВСТРОЕННОЙ КНОПКОЙ ОТВЕТА ---
 @bot.message_handler(content_types=['contact'])
 def handle_contact(message):
     contact = message.contact
@@ -614,8 +604,7 @@ def handle_contact(message):
     )
     
     admin_markup = types.InlineKeyboardMarkup(row_width=1)
-    if user.username:
-        admin_markup.add(types.InlineKeyboardButton("💬 Написать клиенту", url=f"https://t.me/{user.username}"))
+    admin_markup.add(types.InlineKeyboardButton("💬 Написать клиенту", callback_data=f"reply_to_{user.id}"))
     admin_markup.add(types.InlineKeyboardButton(f"❌ Отменить бронь #{booking_id}", callback_data=f"admin_cancel_{booking_id}"))
     
     try:
@@ -673,6 +662,14 @@ def cancel_booking(call):
     if info:
         s_name, m_name, b_date, b_time = info
         bot.send_message(ADMIN_ID, f"⚠️ **КЛИЕНТ ОТМЕНИЛ БРОНЬ #{booking_id}!**\n\nОсвободилось время у мастера {m_name}: {s_name} — {b_date} в {b_time}.")
+
+# --- УДОБНЫЙ ИНТЕРАКТИВНЫЙ ОТВЕТ КЛИЕНТУ ДЛЯ МАСТЕРА/АДМИНА ---
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("reply_to_"))
+def start_reply_to_user(call):
+    target_user_id = int(call.data.split("_")[2])
+    admin_states[ADMIN_ID] = f"SENDING_REPLY_TO_{target_user_id}"
+    bot.send_message(ADMIN_ID, "✍️ **Введите ваш ответ для клиента** (вы можете отправить текст, голосовое сообщение или картинку):", parse_mode='Markdown')
 
 # --- АДМИН-ПАНЕЛЬ ---
 
@@ -763,16 +760,36 @@ def show_info(message):
 def ask_question(message):
     bot.send_message(message.chat.id, "❓ **У вас есть вопрос?**\n\nПросто напишите ваш вопрос прямо в этот чат, и мы перешлем его администратору!", parse_mode='Markdown')
 
-# --- ОБРАБОТКА ТЕКСТА (ФОРМЫ И ВОПРОСЫ) ---
-@bot.message_handler(func=lambda message: True)
+# --- ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ И ОТВЕТОВ КЛИЕНТАМ ---
+@bot.message_handler(content_types=['text', 'voice', 'photo'], func=lambda message: True)
 def handle_text(message):
     user = message.from_user
     
     if message.chat.id == ADMIN_ID:
         state = admin_states.get(ADMIN_ID, "")
         
-        # Ручной ввод новой даты для мастера
-        if state and state.startswith("WAITING_NEW_DATE_"):
+        # Режим отправки прямого ответа клиенту
+        if state and state.startswith("SENDING_REPLY_TO_"):
+            target_user_id = int(state.split("SENDING_REPLY_TO_")[1])
+            try:
+                if message.text:
+                    bot.send_message(target_user_id, f"💬 **Ответ от администратора:**\n\n{message.text}", parse_mode='Markdown')
+                elif message.voice:
+                    bot.send_message(target_user_id, "💬 **Голосовой ответ от администратора:**")
+                    bot.send_voice(target_user_id, message.voice.file_id)
+                elif message.photo:
+                    bot.send_photo(target_user_id, message.photo[-1].file_id, caption=f"💬 **Ответ от администратора:**\n\n{message.caption or ''}")
+                    
+                bot.send_message(ADMIN_ID, "✅ **Ваш ответ успешно отправлен клиенту!**")
+                admin_states[ADMIN_ID] = None
+                return
+            except Exception as e:
+                bot.send_message(ADMIN_ID, f"❌ Ошибка отправки ответа клиенту: {e}")
+                admin_states[ADMIN_ID] = None
+                return
+
+        # Ручной ввод новой даты
+        elif state and state.startswith("WAITING_NEW_DATE_"):
             m_id = int(state.split("WAITING_NEW_DATE_")[1])
             date_str = message.text.strip()
             
@@ -791,14 +808,13 @@ def handle_text(message):
             
             admin_states[ADMIN_ID] = None
             
-            # Сразу предлагаем выбрать время на эту новую дату
             quick_times = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"]
             markup = types.InlineKeyboardMarkup(row_width=3)
             time_buttons = [types.InlineKeyboardButton(f"⏰ {t}", callback_data=f"adm_savetime_{m_id}_{date_str}_{t}") for t in quick_times]
             markup.add(*time_buttons)
             markup.add(types.InlineKeyboardButton("⬅️ К меню мастера", callback_data=f"adm_m_menu_{m_id}"))
             
-            bot.send_message(ADMIN_ID, f"Дата **{date_str}** добавлена! Теперь выберите доступное время:", parse_mode='Markdown', reply_markup=markup)
+            bot.send_message(ADMIN_ID, f"Дата **{date_str}** добавлена! Выберите доступное время:", parse_mode='Markdown', reply_markup=markup)
             return
 
         # Текстовый ввод всего графика сразу
@@ -865,7 +881,7 @@ def handle_text(message):
                 bot.send_message(ADMIN_ID, "❌ Ошибка формата. Отправьте: `Имя | Специализация`", parse_mode='Markdown')
                 return
 
-        # Ответ клиенту через Reply
+        # Ответ через функцию Telegram Reply
         if message.reply_to_message:
             try:
                 msg_text = message.reply_to_message.text
@@ -878,16 +894,19 @@ def handle_text(message):
             except Exception as e:
                 bot.send_message(ADMIN_ID, f"❌ Ошибка отправки ответа: {e}")
                 return
-        else:
-            bot.send_message(ADMIN_ID, "💡 Нажмите «Ответить» (Reply) на сообщение с вопросом клиента, чтобы отправить ему ответ.")
-            return
 
-    bot.send_message(
-        ADMIN_ID, 
-        f"📩 **Вопрос от пользователя (ID: {user.id}):**\n"
-        f"👤 **Имя:** {user.first_name} (@{user.username if user.username else 'нет'})\n\n"
-        f"💬 **Текст:** {message.text}"
+    # Вопрос от клиента
+    msg_text = (
+        f"📩 **НОВЫЙ ВОПРОС ОТ КЛИЕНТА!**\n\n"
+        f"👤 **Имя:** {user.first_name} (@{user.username if user.username else 'нет'})\n"
+        f"🆔 **ID:** `{user.id}`\n\n"
+        f"💬 **Текст:** {message.text or '_голосовое/фото_'}"
     )
+    
+    reply_markup = types.InlineKeyboardMarkup(row_width=1)
+    reply_markup.add(types.InlineKeyboardButton("💬 Ответить клиенту", callback_data=f"reply_to_{user.id}"))
+    
+    bot.send_message(ADMIN_ID, msg_text, reply_markup=reply_markup, parse_mode='Markdown')
     bot.send_message(message.chat.id, "Ваше сообщение передано администратору! Мы ответим вам в ближайшее время.")
 
 bot.polling(none_stop=True)
