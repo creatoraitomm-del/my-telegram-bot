@@ -24,9 +24,19 @@ ADMIN_ID = 479939884
 
 bot = telebot.TeleBot(TOKEN)
 
-# Хранилище записей и выборов пользователей
+# Хранилище динамических слотов (по умолчанию)
+available_slots = {
+    "Понедельник": ["12:00", "15:00", "18:00"],
+    "Среда": ["10:00", "14:00", "16:30"],
+    "Пятница": ["11:00", "13:00", "17:00"]
+}
+
+# Хранилище состояния админа (для режима ввода новых слотов)
+admin_state = {}
+
+# Хранилище выбора пользователей и общих броней
 user_booking = {}
-all_bookings = []  # Список всех поступивших броней для администратора
+all_bookings = []
 
 # --- КЛАВИАТУРЫ ---
 
@@ -43,35 +53,32 @@ def client_keyboard():
 def admin_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn_list = types.KeyboardButton("📋 Все записи")
+    btn_slots = types.KeyboardButton("⚙️ Изменить слоты")
     btn_stats = types.KeyboardButton("📊 Статистика")
-    btn_broadcast = types.KeyboardButton("📢 Рассылка")
     btn_switch = types.KeyboardButton("👁 Режим клиента")
-    markup.add(btn_list, btn_stats, btn_broadcast, btn_switch)
+    markup.add(btn_list, btn_slots, btn_stats, btn_switch)
     return markup
 
-# Клавиатура выбора дней для клиента
+# Динамическая клавиатура выбора дней для клиента
 def get_days_keyboard():
     markup = types.InlineKeyboardMarkup(row_width=1)
-    btn_mon = types.InlineKeyboardButton("🗓 Понедельник", callback_data="day_Понедельник")
-    btn_wed = types.InlineKeyboardButton("🗓 Среда", callback_data="day_Среда")
-    btn_fri = types.InlineKeyboardButton("🗓 Пятница", callback_data="day_Пятница")
-    markup.add(btn_mon, btn_wed, btn_fri)
+    for day in available_slots.keys():
+        markup.add(types.InlineKeyboardButton(f"🗓 {day}", callback_data=f"day_{day}"))
     return markup
 
 # --- КОМАНДА /START ---
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
+    admin_state[user_id] = None  # Сброс состояния
     
-    # Если зашел АДМИНИСТРАТОР
     if user_id == ADMIN_ID:
         bot.send_message(
             message.chat.id, 
-            "👑 **Добро пожаловать в панель администратора!**\n\nВам доступно специальное управление ботом:", 
+            "👑 **Панель администратора**\n\nВыберите нужное действие в меню ниже:", 
             reply_markup=admin_keyboard(),
             parse_mode='Markdown'
         )
-    # Если зашел КЛИЕНТ
     else:
         welcome_text = (
             f"Здравствуйте, {message.from_user.first_name}! 👋\n\n"
@@ -80,16 +87,32 @@ def start(message):
         )
         bot.send_message(message.chat.id, welcome_text, reply_markup=client_keyboard())
 
-# --- ФУНКЦИИ АДМИНИСТРАТОРА ---
+# --- УПРАВЛЕНИЕ СЛОТАМИ (ДЛЯ АДМИНИСТРАТОРА) ---
+
+@bot.message_handler(func=lambda message: message.text == "⚙️ Изменить слоты" and message.chat.id == ADMIN_ID)
+def edit_slots_start(message):
+    # Показываем текущие слоты
+    slots_info = "⚙️ **Текущие доступные слоты:**\n\n"
+    for day, times in available_slots.items():
+        slots_info += f"🔹 **{day}:** {', '.join(times)}\n"
+    
+    slots_info += (
+        "\n✍️ **Чтобы изменить слоты, отправьте сообщение в таком формате:**\n"
+        "`Понедельник: 10:00, 12:00 | Вторник: 15:00, 18:00 | Четверг: 11:00`\n\n"
+        "*(Разделяйте дни символом '|', а время — запятыми)*"
+    )
+    admin_state[ADMIN_ID] = "WAITING_FOR_SLOTS"
+    bot.send_message(ADMIN_ID, slots_info, parse_mode='Markdown')
 
 # Просмотр всех записей
 @bot.message_handler(func=lambda message: message.text == "📋 Все записи" and message.chat.id == ADMIN_ID)
 def show_all_bookings(message):
+    admin_state[ADMIN_ID] = None
     if not all_bookings:
         bot.send_message(ADMIN_ID, "📭 Активных записей пока нет.")
         return
     
-    text = "📋 **Списoк текущих записей:**\n\n"
+    text = "📋 **Список текущих записей:**\n\n"
     for idx, item in enumerate(all_bookings, 1):
         text += f"{idx}. **{item['day']} ({item['time']})** — {item['name']} ({item['phone']})\n"
     
@@ -98,12 +121,14 @@ def show_all_bookings(message):
 # Статистика
 @bot.message_handler(func=lambda message: message.text == "📊 Статистика" and message.chat.id == ADMIN_ID)
 def show_stats(message):
+    admin_state[ADMIN_ID] = None
     total = len(all_bookings)
     bot.send_message(ADMIN_ID, f"📈 **Статистика бота:**\n\nВсего полученных броней: **{total}**", parse_mode='Markdown')
 
-# Переключение в режим клиента
+# Режим клиента
 @bot.message_handler(func=lambda message: message.text == "👁 Режим клиента" and message.chat.id == ADMIN_ID)
 def switch_to_client(message):
+    admin_state[ADMIN_ID] = None
     bot.send_message(
         ADMIN_ID, 
         "Вы переключились в вид для обычного клиента. Чтобы вернуться в Админ-панель, введите команду `/start`.", 
@@ -111,15 +136,13 @@ def switch_to_client(message):
         parse_mode='Markdown'
     )
 
-# Рассылка
-@bot.message_handler(func=lambda message: message.text == "📢 Рассылка" and message.chat.id == ADMIN_ID)
-def start_broadcast(message):
-    bot.send_message(ADMIN_ID, "📢 Функция рассылки активирована. Скоро вы сможете отправлять новости всем пользователям!")
-
-# --- КЛИЕНТСКИЙ СЦЕНАРИЙ ЗАПИСИ ---
+# --- КЛИЕНТСКИЙ СЦЕНАРИЙ ZAПИСИ ---
 
 @bot.message_handler(func=lambda message: message.text in ["📅 Выбрать время и записаться", "📝 Записаться"])
 def choose_day(message):
+    if not available_slots:
+        bot.send_message(message.chat.id, "К сожалению, сейчас нет доступных слотов для записи.")
+        return
     bot.send_message(
         message.chat.id, 
         "Выберите удобный день для записи:", 
@@ -141,12 +164,7 @@ def choose_time(call):
     user_booking[call.message.chat.id] = {"day": selected_day}
     
     markup = types.InlineKeyboardMarkup(row_width=2)
-    if selected_day == "Понедельник":
-        times = ["12:00", "15:00", "18:00"]
-    elif selected_day == "Среда":
-        times = ["10:00", "14:00", "16:30"]
-    else:
-        times = ["11:00", "13:00", "17:00"]
+    times = available_slots.get(selected_day, [])
     
     time_buttons = [types.InlineKeyboardButton(f"⏰ {t}", callback_data=f"time_{t}") for t in times]
     markup.add(*time_buttons)
@@ -191,7 +209,7 @@ def confirm_slot(call):
         reply_markup=markup
     )
 
-# --- ПРИЕМ КОНТАКТА И СОХРАНЕНИЕ В БАЗУ АДМИНА ---
+# --- ПРИЕМ КОНТАКТА ---
 @bot.message_handler(content_types=['contact'])
 def handle_contact(message):
     contact = message.contact
@@ -204,7 +222,6 @@ def handle_contact(message):
     client_name = f"{contact.first_name} {contact.last_name or ''}".strip()
     phone = f"+{contact.phone_number}"
     
-    # Сохраняем в память администратора
     all_bookings.append({
         "day": day,
         "time": time_slot,
@@ -256,13 +273,37 @@ def ask_question(message):
     )
     bot.send_message(message.chat.id, ask_text, parse_mode='Markdown')
 
-# Обработка сообщений и Reply от админа
+# Обработка текстовых сообщений
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     user = message.from_user
     
     # Администратор
     if message.chat.id == ADMIN_ID:
+        # Если админ в режиме обновления слотов
+        if admin_state.get(ADMIN_ID) == "WAITING_FOR_SLOTS":
+            try:
+                new_slots = {}
+                raw_days = message.text.split("|")
+                for item in raw_days:
+                    if ":" in item:
+                        day, times_str = item.split(":", 1)
+                        times = [t.strip() for t in times_str.split(",") if t.strip()]
+                        new_slots[day.strip()] = times
+                
+                if new_slots:
+                    global available_slots
+                    available_slots = new_slots
+                    admin_state[ADMIN_ID] = None
+                    bot.send_message(ADMIN_ID, "✅ **Доступное время успешно обновлено!**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+                else:
+                    bot.send_message(ADMIN_ID, "❌ Не удалось распознать формат. Попробуйте еще раз.")
+                return
+            except Exception as e:
+                bot.send_message(ADMIN_ID, f"❌ Ошибка формата: {e}. Попробуйте еще раз.")
+                return
+
+        # Если админ отвечает на вопрос пользователя
         if message.reply_to_message:
             try:
                 msg_text = message.reply_to_message.text
