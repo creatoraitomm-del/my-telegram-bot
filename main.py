@@ -20,9 +20,7 @@ threading.Thread(target=run_health_check_server, daemon=True).start()
 
 # 2. Настройки бота
 TOKEN = os.environ.get('BOT_TOKEN')
-
-# ⚠️ ВАЖНО: Вставьте скопированный ID из userinfobot вместо цифр 123456789 (без кавычек)
-ADMIN_ID = 479939884  
+ADMIN_ID = 479939884
 
 bot = telebot.TeleBot(TOKEN)
 
