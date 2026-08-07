@@ -24,11 +24,14 @@ ADMIN_ID = 479939884
 
 bot = telebot.TeleBot(TOKEN)
 
-# Хранилище выбора пользователей
+# Хранилище записей и выборов пользователей
 user_booking = {}
+all_bookings = []  # Список всех поступивших броней для администратора
 
-# Главное меню
-def main_keyboard():
+# --- КЛАВИАТУРЫ ---
+
+# 1. Меню для клиентов
+def client_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn_book = types.KeyboardButton("📅 Выбрать время и записаться")
     btn_info = types.KeyboardButton("ℹ️ Контакты и инфо")
@@ -36,7 +39,17 @@ def main_keyboard():
     markup.add(btn_book, btn_info, btn_ask)
     return markup
 
-# Клавиатура выбора дней
+# 2. Меню ДЛЯ АДМИНИСТРАТОРА
+def admin_keyboard():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btn_list = types.KeyboardButton("📋 Все записи")
+    btn_stats = types.KeyboardButton("📊 Статистика")
+    btn_broadcast = types.KeyboardButton("📢 Рассылка")
+    btn_switch = types.KeyboardButton("👁 Режим клиента")
+    markup.add(btn_list, btn_stats, btn_broadcast, btn_switch)
+    return markup
+
+# Клавиатура выбора дней для клиента
 def get_days_keyboard():
     markup = types.InlineKeyboardMarkup(row_width=1)
     btn_mon = types.InlineKeyboardButton("🗓 Понедельник", callback_data="day_Понедельник")
@@ -45,17 +58,66 @@ def get_days_keyboard():
     markup.add(btn_mon, btn_wed, btn_fri)
     return markup
 
-# Команда /start
+# --- КОМАНДА /START ---
 @bot.message_handler(commands=['start'])
 def start(message):
-    welcome_text = (
-        f"Здравствуйте, {message.from_user.first_name}! 👋\n\n"
-        f"Добро пожаловать! Я бот для онлайн-записи.\n"
-        f"Выберите нужное действие в меню ниже 👇"
-    )
-    bot.send_message(message.chat.id, welcome_text, reply_markup=main_keyboard())
+    user_id = message.from_user.id
+    
+    # Если зашел АДМИНИСТРАТОР
+    if user_id == ADMIN_ID:
+        bot.send_message(
+            message.chat.id, 
+            "👑 **Добро пожаловать в панель администратора!**\n\nВам доступно специальное управление ботом:", 
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
+    # Если зашел КЛИЕНТ
+    else:
+        welcome_text = (
+            f"Здравствуйте, {message.from_user.first_name}! 👋\n\n"
+            f"Добро пожаловать! Я бот для онлайн-записи.\n"
+            f"Выберите нужное действие в меню ниже 👇"
+        )
+        bot.send_message(message.chat.id, welcome_text, reply_markup=client_keyboard())
 
-# --- ШАГ 1: Выбор дня недели ---
+# --- ФУНКЦИИ АДМИНИСТРАТОРА ---
+
+# Просмотр всех записей
+@bot.message_handler(func=lambda message: message.text == "📋 Все записи" and message.chat.id == ADMIN_ID)
+def show_all_bookings(message):
+    if not all_bookings:
+        bot.send_message(ADMIN_ID, "📭 Активных записей пока нет.")
+        return
+    
+    text = "📋 **Списoк текущих записей:**\n\n"
+    for idx, item in enumerate(all_bookings, 1):
+        text += f"{idx}. **{item['day']} ({item['time']})** — {item['name']} ({item['phone']})\n"
+    
+    bot.send_message(ADMIN_ID, text, parse_mode='Markdown')
+
+# Статистика
+@bot.message_handler(func=lambda message: message.text == "📊 Статистика" and message.chat.id == ADMIN_ID)
+def show_stats(message):
+    total = len(all_bookings)
+    bot.send_message(ADMIN_ID, f"📈 **Статистика бота:**\n\nВсего полученных броней: **{total}**", parse_mode='Markdown')
+
+# Переключение в режим клиента
+@bot.message_handler(func=lambda message: message.text == "👁 Режим клиента" and message.chat.id == ADMIN_ID)
+def switch_to_client(message):
+    bot.send_message(
+        ADMIN_ID, 
+        "Вы переключились в вид для обычного клиента. Чтобы вернуться в Админ-панель, введите команду `/start`.", 
+        reply_markup=client_keyboard(),
+        parse_mode='Markdown'
+    )
+
+# Рассылка
+@bot.message_handler(func=lambda message: message.text == "📢 Рассылка" and message.chat.id == ADMIN_ID)
+def start_broadcast(message):
+    bot.send_message(ADMIN_ID, "📢 Функция рассылки активирована. Скоро вы сможете отправлять новости всем пользователям!")
+
+# --- КЛИЕНТСКИЙ СЦЕНАРИЙ ЗАПИСИ ---
+
 @bot.message_handler(func=lambda message: message.text in ["📅 Выбрать время и записаться", "📝 Записаться"])
 def choose_day(message):
     bot.send_message(
@@ -64,7 +126,6 @@ def choose_day(message):
         reply_markup=get_days_keyboard()
     )
 
-# Кнопка "Назад"
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_days")
 def back_to_days(call):
     bot.edit_message_text(
@@ -74,7 +135,6 @@ def back_to_days(call):
         reply_markup=get_days_keyboard()
     )
 
-# --- ШАГ 2: Выбор времени ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("day_"))
 def choose_time(call):
     selected_day = call.data.split("_")[1]
@@ -102,7 +162,6 @@ def choose_time(call):
         reply_markup=markup
     )
 
-# --- ШАГ 3: Подтверждение выбора времени ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("time_"))
 def confirm_slot(call):
     selected_time = call.data.split("_")[1]
@@ -132,7 +191,7 @@ def confirm_slot(call):
         reply_markup=markup
     )
 
-# --- ШАГ 4: Прием контакта ---
+# --- ПРИЕМ КОНТАКТА И СОХРАНЕНИЕ В БАЗУ АДМИНА ---
 @bot.message_handler(content_types=['contact'])
 def handle_contact(message):
     contact = message.contact
@@ -142,13 +201,23 @@ def handle_contact(message):
     booking_info = user_booking.get(chat_id, {"day": "Не указан", "time": "Не указано"})
     day = booking_info.get("day", "Не указан")
     time_slot = booking_info.get("time", "Не указано")
+    client_name = f"{contact.first_name} {contact.last_name or ''}".strip()
+    phone = f"+{contact.phone_number}"
+    
+    # Сохраняем в память администратора
+    all_bookings.append({
+        "day": day,
+        "time": time_slot,
+        "name": client_name,
+        "phone": phone
+    })
     
     lead_info = (
         f"🎯 **ПОДТВЕРЖДЕННАЯ БРОНЬ В БОТЕ!**\n\n"
         f"📅 **Дата/День:** {day}\n"
         f"⏰ **Время:** {time_slot}\n\n"
-        f"👤 **Клиент:** {contact.first_name} {contact.last_name or ''}\n"
-        f"📞 **Телефон:** +{contact.phone_number}\n"
+        f"👤 **Клиент:** {client_name}\n"
+        f"📞 **Телефон:** {phone}\n"
         f"🔗 **Юзернейм:** @{user.username if user.username else 'не указан'}\n"
         f"🆔 **ID:** `{user.id}`"
     )
@@ -163,11 +232,11 @@ def handle_contact(message):
         f"🎉 **Запись успешно подтверждена!**\n\n"
         f"Ждем вас в **{day} в {time_slot}**.\n"
         f"Мы забронировали это время за вами!", 
-        reply_markup=main_keyboard(),
+        reply_markup=client_keyboard(),
         parse_mode='Markdown'
     )
 
-# Инфо
+# Обычные клиентские блоки
 @bot.message_handler(func=lambda message: message.text == "ℹ️ Контакты и инфо")
 def show_info(message):
     info_text = (
@@ -179,7 +248,6 @@ def show_info(message):
     )
     bot.send_message(message.chat.id, info_text, parse_mode='Markdown')
 
-# Задать вопрос
 @bot.message_handler(func=lambda message: message.text == "💬 Задать вопрос")
 def ask_question(message):
     ask_text = (
@@ -188,12 +256,12 @@ def ask_question(message):
     )
     bot.send_message(message.chat.id, ask_text, parse_mode='Markdown')
 
-# Обработка текстовых сообщений
+# Обработка сообщений и Reply от админа
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     user = message.from_user
     
-    # Режим Администратора
+    # Администратор
     if message.chat.id == ADMIN_ID:
         if message.reply_to_message:
             try:
@@ -209,10 +277,10 @@ def handle_text(message):
                 bot.send_message(ADMIN_ID, f"❌ Ошибка отправки ответа: {e}")
                 return
         else:
-            bot.send_message(ADMIN_ID, "💡 Чтобы ответить клиенту, воспользуйтесь функцией «Ответить» (Reply) на сообщение с его вопросом.")
+            bot.send_message(ADMIN_ID, "💡 Воспользуйтесь кнопками ниже или нажмите «Ответить» (Reply) на сообщение с вопросом клиента.")
             return
 
-    # Режим Клиента
+    # Клиент
     bot.send_message(
         ADMIN_ID, 
         f"📩 **Вопрос от пользователя (ID: {user.id}):**\n"
