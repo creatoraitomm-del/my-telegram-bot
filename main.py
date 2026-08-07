@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import threading
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot import types
@@ -102,13 +103,12 @@ def client_keyboard():
 
 def admin_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btn_today = types.KeyboardButton("📅 Записи на сегодня")
     btn_list = types.KeyboardButton("📋 Все активные записи")
     btn_stats = types.KeyboardButton("📊 Статистика")
     btn_switch = types.KeyboardButton("👁 Режим клиента")
-    markup.add(btn_list, btn_stats, btn_switch)
+    markup.add(btn_today, btn_list, btn_stats, btn_switch)
     return markup
-
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ОТОБРАЖЕНИЯ С шагами
 
 def render_services_markup():
     conn = sqlite3.connect('booking_system.db')
@@ -134,7 +134,6 @@ def render_masters_markup(service_id):
     for m_id, name, spec in masters:
         markup.add(types.InlineKeyboardButton(f"👤 {name} ({spec})", callback_data=f"master_{m_id}"))
     
-    # Кнопка НАЗАД к услугам
     btn_back = types.InlineKeyboardButton("⬅️ Назад к выбору услуги", callback_data="back_to_services")
     markup.add(btn_back)
     return markup
@@ -335,7 +334,7 @@ def select_time(call):
     
     bot.send_message(chat_id, "Осталось подтвердить контакт:", reply_markup=markup)
 
-# --- ПРИЕМ КОНТАКТА И СОХРАНЕНИЕ В БАЗУ ---
+# --- ПРИЕМ КОНТАКТА И МГНОВЕННЫЙ ПУШ АДМИНИСТРАТОРУ ---
 @bot.message_handler(content_types=['contact'])
 def handle_contact(message):
     contact = message.contact
@@ -357,19 +356,25 @@ def handle_contact(message):
     conn.commit()
     conn.close()
     
+    # Карточка для администратора с инлайн-кнопками управления
     lead_info = (
-        f"🎯 **НОВАЯ ПОДТВЕРЖДЕННАЯ БРОНЬ #{booking_id}**\n\n"
+        f"🚨 **НОВАЯ ЗАПИСЬ #{booking_id}!**\n\n"
+        f"🗓 **Дата:** {draft.get('date')} в **{draft.get('time')}**\n"
         f"✂️ **Услуга:** {draft.get('service_name')}\n"
-        f"👤 **Мастер:** {draft.get('master_name')}\n"
-        f"📅 **Дата:** {draft.get('date')} в {draft.get('time')}\n\n"
+        f"👤 **Мастер:** {draft.get('master_name')}\n\n"
         f"👤 **Клиент:** {client_name}\n"
-        f"📞 **Телефон:** {phone}\n"
+        f"📞 **Телефон:** `{phone}`\n"
         f"🔗 **Юзернейм:** @{user.username if user.username else 'нет'}\n"
         f"🆔 **ID:** `{user.id}`"
     )
     
+    admin_markup = types.InlineKeyboardMarkup(row_width=1)
+    if user.username:
+        admin_markup.add(types.InlineKeyboardButton("💬 Написать клиенту", url=f"https://t.me/{user.username}"))
+    admin_markup.add(types.InlineKeyboardButton(f"❌ Отменить бронь #{booking_id}", callback_data=f"admin_cancel_{booking_id}"))
+    
     try:
-        bot.send_message(ADMIN_ID, lead_info, parse_mode='Markdown')
+        bot.send_message(ADMIN_ID, lead_info, reply_markup=admin_markup, parse_mode='Markdown')
     except Exception as e:
         print(f"Ошибка отправки админу: {e}")
 
@@ -382,7 +387,39 @@ def handle_contact(message):
         parse_mode='Markdown'
     )
 
-# --- ЛИЧНЫЙ КАБИНЕТ КЛИЕНТА (МОИ ЗАПИСИ И ОТМЕНА) ---
+# --- УПРАВЛЕНИЕ ЗАПИСЯМИ ДЛЯ АДМИНИСТРАТОРА (ОТМЕНА ИЗ УВЕДОМЛЕНИЯ) ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_cancel_"))
+def admin_cancel_booking(call):
+    booking_id = int(call.data.split("_")[2])
+    
+    conn = sqlite3.connect('booking_system.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id, service_name, booking_date, booking_time FROM bookings WHERE id = ?', (booking_id,))
+    row = cursor.fetchone()
+    
+    if row:
+        user_id, s_name, b_date, b_time = row
+        cursor.execute('UPDATE bookings SET status = "cancelled" WHERE id = ?', (booking_id,))
+        conn.commit()
+        
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"❌ **Запись #{booking_id} отменена администратором.**",
+            parse_mode='Markdown'
+        )
+        
+        try:
+            bot.send_message(
+                user_id, 
+                f"🔔 **Уведомление:** Ваша запись #{booking_id} ({s_name} на {b_date} в {b_time}) была отменена администратором."
+            )
+        except Exception as e:
+            print(f"Ошибка отправки клиенту: {e}")
+            
+    conn.close()
+
+# --- ЛИЧНЫЙ КАБИНЕТ КЛИЕНТА ---
 @bot.message_handler(func=lambda message: message.text == "👤 Мои записи")
 def my_bookings(message):
     user_id = message.from_user.id
@@ -416,6 +453,9 @@ def cancel_booking(call):
     
     conn = sqlite3.connect('booking_system.db')
     cursor = conn.cursor()
+    cursor.execute('SELECT service_name, booking_date, booking_time FROM bookings WHERE id = ?', (booking_id,))
+    booking_info = cursor.fetchone()
+    
     cursor.execute('UPDATE bookings SET status = "cancelled" WHERE id = ?', (booking_id,))
     conn.commit()
     conn.close()
@@ -423,13 +463,48 @@ def cancel_booking(call):
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
-        text=f"❌ **Запись #{booking_id} успешно отменена.** Выбранное время снова свободно для бронирования.",
+        text=f"❌ **Запись #{booking_id} успешно отменена.** Выбранное время снова свободно.",
         parse_mode='Markdown'
     )
     
-    bot.send_message(ADMIN_ID, f"🔔 **ОТМЕНА БРОНИ:** Клиент отменил запись #{booking_id}.")
+    if booking_info:
+        s_name, b_date, b_time = booking_info
+        bot.send_message(
+            ADMIN_ID, 
+            f"⚠️ **КЛИЕНТ ОТМЕНИЛ БРОНЬ #{booking_id}!**\n\nОсвободилось время: {s_name} — {b_date} в {b_time}."
+        )
 
 # --- АДМИН-ПАНЕЛЬ ---
+
+# 1. Фильтр: Записи на сегодня
+@bot.message_handler(func=lambda message: message.text == "📅 Записи на сегодня" and message.chat.id == ADMIN_ID)
+def admin_today_bookings(message):
+    conn = sqlite3.connect('booking_system.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT id, client_name, phone, service_name, master_name, booking_date, booking_time 
+        FROM bookings 
+        WHERE status = 'active'
+        ORDER BY id DESC
+    ''')
+    rows = cursor.fetchall()
+    conn.close()
+    
+    today_str = datetime.now().strftime("%d")
+    today_rows = [r for r in rows if r[5].startswith(today_str)]
+    
+    if not today_rows:
+        bot.send_message(ADMIN_ID, "📭 На сегодня активных записей нет.")
+        return
+        
+    text = "📅 **ЗАПИСИ НА СЕГОДНЯ:**\n\n"
+    for b_id, name, phone, s_name, m_name, b_date, b_time in today_rows:
+        text += f"⏰ **{b_time}** — {name} ({phone})\n✂️ {s_name} | 👤 {m_name}\n───────────────\n"
+        
+    bot.send_message(ADMIN_ID, text, parse_mode='Markdown')
+
+# 2. Все записи
 @bot.message_handler(func=lambda message: message.text == "📋 Все активные записи" and message.chat.id == ADMIN_ID)
 def admin_all_bookings(message):
     conn = sqlite3.connect('booking_system.db')
@@ -453,6 +528,7 @@ def admin_all_bookings(message):
         
     bot.send_message(ADMIN_ID, text, parse_mode='Markdown')
 
+# 3. Статистика
 @bot.message_handler(func=lambda message: message.text == "📊 Статистика" and message.chat.id == ADMIN_ID)
 def admin_stats(message):
     conn = sqlite3.connect('booking_system.db')
